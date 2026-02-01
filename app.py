@@ -213,35 +213,21 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # 主界面
-col_upload, col_preview = st.columns([1, 1])
+st.markdown("""
+<div style="background: rgba(255, 255, 255, 0.03);
+           border: 2px dashed rgba(233, 69, 96, 0.5);
+           border-radius: 16px; padding: 2rem; text-align: center; margin: 2rem 0;">
+    <div style="font-size: 3rem; margin-bottom: 1rem;">📤</div>
+    <h3 style="color: #e94560; margin: 0;">上传视频</h3>
+    <p style="color: rgba(255, 255, 255, 0.6);">支持 MP4, AVI, MOV, MKV</p>
+</div>
+""", unsafe_allow_html=True)
 
-with col_upload:
-    st.markdown("""
-    <div style="background: rgba(255, 255, 255, 0.03);
-               border: 2px dashed rgba(233, 69, 96, 0.5);
-               border-radius: 16px; padding: 2rem; text-align: center;">
-        <div style="font-size: 3rem; margin-bottom: 1rem;">📤</div>
-        <h3 style="color: #e94560; margin: 0;">上传视频</h3>
-        <p style="color: rgba(255, 255, 255, 0.6);">支持 MP4, AVI, MOV, MKV</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    uploaded_file = st.file_uploader(
-        "选择视频文件",
-        type=["mp4", "avi", "mov", "mkv"],
-        label_visibility="collapsed"
-    )
-
-with col_preview:
-    if uploaded_file:
-        st.markdown("""
-        <div style="background: rgba(255, 255, 255, 0.03);
-                   border: 1px solid rgba(255, 255, 255, 0.1);
-                   border-radius: 16px; padding: 1.5rem;">
-            <h3 style="color: #e94560; margin: 0 0 1rem 0;">👁️ 视频预览</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        st.video(uploaded_file)
+uploaded_file = st.file_uploader(
+    "选择视频文件",
+    type=["mp4", "avi", "mov", "mkv"],
+    label_visibility="collapsed"
+)
 
 # 处理视频
 if uploaded_file is not None:
@@ -341,7 +327,6 @@ if uploaded_file is not None:
                     <h3 style="color: #e94560; margin: 0 0 1rem 0;">📥 下载结果</h3>
                 </div>
                 """, unsafe_allow_html=True)
-                st.video(output_path)
 
                 with open(output_path, "rb") as f:
                     st.download_button(
