@@ -26,13 +26,13 @@ class FaceTracker:
         """初始化跟踪器"""
         self.bbox = bbox
         if self.tracker_type == 'KCF':
-            self.tracker = cv2.TrackerKCF_create()
+            self.tracker = cv2.TrackerKCF.create()
         elif self.tracker_type == 'CSRT':
-            self.tracker = cv2.TrackerCSRT_create()
+            self.tracker = cv2.TrackerCSRT.create()
         elif self.tracker_type == 'MOSSE':
-            self.tracker = cv2.TrackerMOSSE_create()
+            self.tracker = cv2.TrackerMOSSE.create()
         else:
-            self.tracker = cv2.TrackerKCF_create()
+            self.tracker = cv2.TrackerKCF.create()
 
         self.tracker.init(frame, bbox)
         self.is_initialized = True
