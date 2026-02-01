@@ -137,7 +137,7 @@ with st.sidebar:
     # 打码方式选择
     st.markdown("### 🎨 打码效果")
     blur_type = st.radio(
-        "",
+        "选择打码效果",
         options=["🌫️ 高斯模糊", "🧊 马赛克"],
         index=0,
         label_visibility="collapsed"
@@ -236,7 +236,7 @@ with col_upload:
     """, unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader(
-        "",
+        "选择视频文件",
         type=["mp4", "avi", "mov", "mkv"],
         label_visibility="collapsed"
     )
