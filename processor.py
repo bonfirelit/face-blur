@@ -7,17 +7,63 @@ from detector import FaceDetector
 from blur_effects import create_blur_effect
 
 
+class FaceTracker:
+    """人脸跟踪器封装"""
+
+    def __init__(self, tracker_type='KCF'):
+        """
+        初始化跟踪器
+
+        Args:
+            tracker_type: 跟踪器类型 ('KCF', 'CSRT', 'MOSSE')
+        """
+        self.tracker_type = tracker_type
+        self.tracker = None
+        self.bbox = None
+        self.is_initialized = False
+
+    def init(self, frame, bbox):
+        """初始化跟踪器"""
+        self.bbox = bbox
+        if self.tracker_type == 'KCF':
+            self.tracker = cv2.TrackerKCF_create()
+        elif self.tracker_type == 'CSRT':
+            self.tracker = cv2.TrackerCSRT_create()
+        elif self.tracker_type == 'MOSSE':
+            self.tracker = cv2.TrackerMOSSE_create()
+        else:
+            self.tracker = cv2.TrackerKCF_create()
+
+        self.tracker.init(frame, bbox)
+        self.is_initialized = True
+
+    def update(self, frame):
+        """更新跟踪"""
+        if not self.is_initialized or self.tracker is None:
+            return False, None
+
+        success, bbox = self.tracker.update(frame)
+        if success:
+            self.bbox = bbox
+        return success, bbox
+
+
 class VideoProcessor:
     """视频处理器"""
 
-    def __init__(self, detector=None):
+    def __init__(self, detector=None, use_tracking=True, detect_interval=5):
         """
         初始化视频处理器
 
         Args:
             detector: FaceDetector 实例，如果为 None 则创建默认检测器
+            use_tracking: 是否使用跟踪优化
+            detect_interval: 检测间隔（每隔多少帧检测一次）
         """
         self.detector = detector or FaceDetector()
+        self.use_tracking = use_tracking
+        self.detect_interval = detect_interval
+        self.trackers = []
 
     def _apply_blur_to_faces(self, frame, bboxes, blur_effect):
         """
@@ -25,21 +71,27 @@ class VideoProcessor:
 
         Args:
             frame: 输入帧
-            bboxes: 人脸边界框列表 [[x1, y1, x2, y2], ...]
+            bboxes: 人脸边界框列表 [[x1, y1, x2, y2], ...] 或 (x, y, w, h) 格式
             blur_effect: 打码效果对象
 
         Returns:
             处理后的帧
         """
         for bbox in bboxes:
-            x1, y1, x2, y2 = bbox
+            # 处理不同格式
+            if len(bbox) == 4:
+                if bbox[2] > bbox[0] and bbox[2] - bbox[0] < bbox[2]:  # x1,y1,x2,y2
+                    x1, y1, x2, y2 = map(int, bbox)
+                else:  # x,y,w,h
+                    x, y, w, h = map(int, bbox)
+                    x1, y1, x2, y2 = x, y, x + w, y + h
 
             # 确保边界框在图像范围内
-            h, w = frame.shape[:2]
-            x1 = max(0, min(x1, w))
-            y1 = max(0, min(y1, h))
-            x2 = max(0, min(x2, w))
-            y2 = max(0, min(y2, h))
+            h_img, w_img = frame.shape[:2]
+            x1 = max(0, min(x1, w_img))
+            y1 = max(0, min(y1, h_img))
+            x2 = max(0, min(x2, w_img))
+            y2 = max(0, min(y2, h_img))
 
             if x2 <= x1 or y2 <= y1:
                 continue
@@ -54,6 +106,37 @@ class VideoProcessor:
             frame[y1:y2, x1:x2] = blurred
 
         return frame
+
+    def _update_trackers(self, frame):
+        """更新所有跟踪器"""
+        active_trackers = []
+        bboxes = []
+
+        for tracker in self.trackers:
+            success, bbox = tracker.update(frame)
+            if success:
+                # 转换为 x1,y1,x2,y2 格式
+                x, y, w, h = bbox
+                x1, y1, x2, y2 = int(x), int(y), int(x + w), int(y + h)
+
+                # 检查边界框是否有效
+                h_img, w_img = frame.shape[:2]
+                if x1 >= 0 and y1 >= 0 and x2 <= w_img and y2 <= h_img and x2 > x1 and y2 > y1:
+                    active_trackers.append(tracker)
+                    bboxes.append([x1, y1, x2, y2])
+
+        self.trackers = active_trackers
+        return bboxes
+
+    def _initialize_trackers(self, frame, bboxes):
+        """用新检测到的人脸初始化跟踪器"""
+        self.trackers = []
+        for bbox in bboxes:
+            tracker = FaceTracker(tracker_type='KCF')
+            # 转换为 x,y,w,h 格式
+            x1, y1, x2, y2 = bbox
+            tracker.init(frame, (x1, y1, x2 - x1, y2 - y1))
+            self.trackers.append(tracker)
 
     def _merge_audio(self, video_path, audio_path, output_path):
         """
@@ -137,13 +220,38 @@ class VideoProcessor:
         if progress_callback:
             progress_callback(0, total_frames, "开始处理视频...")
 
+        # 是否启用优化
+        if self.use_tracking:
+            process_mode = f"优化模式 (每{self.detect_interval}帧检测一次)"
+        else:
+            process_mode = "标准模式 (每帧检测)"
+
         for frame_idx in tqdm(range(total_frames), desc="Processing video"):
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # 检测人脸
-            bboxes = self.detector.detect(frame, confidence_threshold)
+            # 判断是否需要检测（根据配置）
+            need_detect = False
+            if self.use_tracking:
+                # 第一帧必须检测
+                if frame_idx == 0:
+                    need_detect = True
+                # 按间隔检测
+                elif frame_idx % self.detect_interval == 0:
+                    need_detect = True
+                # 没有跟踪器时也检测
+                elif len(self.trackers) == 0:
+                    need_detect = True
+            else:
+                need_detect = True
+
+            # 检测或跟踪人脸
+            if need_detect:
+                bboxes = self.detector.detect(frame, confidence_threshold)
+                self._initialize_trackers(frame, bboxes)
+            else:
+                bboxes = self._update_trackers(frame)
 
             # 应用打码
             frame = self._apply_blur_to_faces(frame, bboxes, blur_effect)
@@ -153,7 +261,7 @@ class VideoProcessor:
 
             # 进度回调
             if progress_callback and frame_idx % 10 == 0:
-                progress_callback(frame_idx, total_frames, f"处理中... {frame_idx}/{total_frames}")
+                progress_callback(frame_idx, total_frames, f"{process_mode}... {frame_idx}/{total_frames}")
 
         # 清理
         cap.release()

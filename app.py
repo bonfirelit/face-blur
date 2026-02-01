@@ -61,12 +61,43 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.subheader("性能优化")
+
+    # 优化模式开关
+    use_optimization = st.checkbox(
+        "启用优化模式",
+        value=True,
+        help="使用跟踪优化，大幅提升处理速度（推荐）"
+    )
+
+    # 检测间隔
+    detect_interval = st.slider(
+        "检测间隔（帧）",
+        min_value=1,
+        max_value=10,
+        value=5,
+        step=1,
+        disabled=not use_optimization,
+        help="每隔多少帧检测一次人脸，中间使用跟踪"
+    )
+
+    st.markdown("---")
     st.markdown("### 说明")
-    st.markdown("""
-    - **高斯模糊**: 默认方式，平滑模糊效果
-    - **马赛克**: 像素块效果
-    - 输出视频将保留原视频的音频、分辨率和帧率
-    """)
+    if use_optimization:
+        st.markdown(f"""
+        - **高斯模糊**: 默认方式，平滑模糊效果
+        - **马赛克**: 像素块效果
+        - **优化模式**: 每 {detect_interval} 帧检测一次，中间使用跟踪
+        - 预计提速 5-10 倍
+        - 输出视频将保留原视频的音频、分辨率和帧率
+        """)
+    else:
+        st.markdown("""
+        - **高斯模糊**: 默认方式，平滑模糊效果
+        - **马赛克**: 像素块效果
+        - **标准模式**: 每帧都检测，精度最高但速度较慢
+        - 输出视频将保留原视频的音频、分辨率和帧率
+        """)
 
 # 主界面
 col1, col2 = st.columns(2)
@@ -129,7 +160,11 @@ if uploaded_file is not None:
             try:
                 # 处理视频
                 detector = FaceDetector()
-                processor = VideoProcessor(detector)
+                processor = VideoProcessor(
+                    detector=detector,
+                    use_tracking=use_optimization,
+                    detect_interval=detect_interval
+                )
 
                 processor.process(
                     input_path=input_path,
