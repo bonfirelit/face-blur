@@ -180,15 +180,6 @@ with st.sidebar:
 
     # 性能设置
     st.markdown("### ⚡ 性能优化")
-    num_workers = st.slider(
-        "并行线程",
-        min_value=1,
-        max_value=8,
-        value=4,
-        step=1,
-        help="更多线程 = 更快处理"
-    )
-
     use_optimization = st.checkbox(
         "🚀 启用智能跟踪",
         value=True,
@@ -202,13 +193,13 @@ with st.sidebar:
         value=5,
         step=1,
         disabled=not use_optimization,
-        help="每隔多少帧重新检测"
+        help="每隔多少帧重新检测，间隔越大越快"
     )
 
     st.markdown("---")
 
     # 配置摘要
-    speed_multiplier = num_workers * (detect_interval if use_optimization else 1)
+    speed_multiplier = detect_interval if use_optimization else 1
     st.markdown(f"""
     <div style="background: rgba(233, 69, 96, 0.1); border: 1px solid rgba(233, 69, 96, 0.3);
          border-radius: 12px; padding: 1rem;">
@@ -216,7 +207,7 @@ with st.sidebar:
             预计提速 {speed_multiplier}x
         </div>
         <div style="color: rgba(255, 255, 255, 0.7); font-size: 0.85rem; text-align: center; margin-top: 0.5rem;">
-            {num_workers} 线程 × {detect_interval if use_optimization else 1} 帧间隔
+            {'智能跟踪' if use_optimization else '全帧检测'} · 每 {detect_interval} 帧检测一次
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -319,8 +310,7 @@ if uploaded_file is not None:
                 processor = VideoProcessor(
                     detector=detector,
                     use_tracking=use_optimization,
-                    detect_interval=detect_interval,
-                    num_workers=num_workers
+                    detect_interval=detect_interval
                 )
 
                 processor.process(
