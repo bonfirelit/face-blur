@@ -27,6 +27,28 @@ class GaussianBlur(BlurEffect):
         """应用高斯模糊"""
         return cv2.GaussianBlur(region, (self.kernel_size, self.kernel_size), self.sigma)
 
+    def apply_ellipse(self, region):
+        """应用椭圆遮罩的高斯模糊"""
+        h, w = region.shape[:2]
+
+        # 创建椭圆遮罩
+        center_x, center_y = w // 2, h // 2
+        axes_x, axes_y = w // 2 - 2, h // 2 - 2
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(mask, (center_x, center_y), (axes_x, axes_y), 0, 0, 360, 255, -1)
+
+        # 应用高斯模糊
+        blurred = cv2.GaussianBlur(region, (self.kernel_size, self.kernel_size), self.sigma)
+
+        # 使用遮罩混合
+        mask_float = mask.astype(np.float32) / 255.0
+        if len(region.shape) == 3:
+            mask_float = cv2.merge([mask_float] * 3)
+
+        result = (region * (1 - mask_float) + blurred * mask_float).astype(np.uint8)
+
+        return result
+
 
 class MosaicBlur(BlurEffect):
     """马赛克效果"""
@@ -44,6 +66,31 @@ class MosaicBlur(BlurEffect):
         small = cv2.resize(region, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
         mosaic = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
         return mosaic
+
+    def apply_ellipse(self, region):
+        """应用椭圆遮罩的马赛克效果"""
+        h, w = region.shape[:2]
+
+        # 创建椭圆遮罩
+        center_x, center_y = w // 2, h // 2
+        axes_x, axes_y = w // 2 - 2, h // 2 - 2
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.ellipse(mask, (center_x, center_y), (axes_x, axes_y), 0, 0, 360, 255, -1)
+
+        # 应用马赛克
+        small_w = max(1, w // self.block_size)
+        small_h = max(1, h // self.block_size)
+        small = cv2.resize(region, (small_w, small_h), interpolation=cv2.INTER_NEAREST)
+        mosaic = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+
+        # 使用遮罩混合
+        mask_float = mask.astype(np.float32) / 255.0
+        if len(region.shape) == 3:
+            mask_float = cv2.merge([mask_float] * 3)
+
+        result = (region * (1 - mask_float) + mosaic * mask_float).astype(np.uint8)
+
+        return result
 
 
 def create_blur_effect(blur_type='gaussian', size=31):

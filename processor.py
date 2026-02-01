@@ -99,8 +99,8 @@ class VideoProcessor:
             # 提取人脸区域
             face_region = frame[y1:y2, x1:x2]
 
-            # 应用打码效果
-            blurred = blur_effect.apply(face_region)
+            # 应用椭圆遮罩的打码效果
+            blurred = blur_effect.apply_ellipse(face_region)
 
             # 写回原帧
             frame[y1:y2, x1:x2] = blurred
