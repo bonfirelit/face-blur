@@ -145,8 +145,12 @@ with col2:
 
 # 处理视频
 if uploaded_file is not None:
-    # 保存上传的文件
-    input_path = f"temp_input_{uploaded_file.name}"
+    # 创建目录（如果不存在）
+    os.makedirs("uploads", exist_ok=True)
+    os.makedirs("outputs", exist_ok=True)
+
+    # 保存上传的文件到 uploads 目录
+    input_path = os.path.join("uploads", uploaded_file.name)
     with open(input_path, "wb") as f:
         f.write(uploaded_file.read())
 
@@ -169,7 +173,7 @@ if uploaded_file is not None:
 
     with col_btn1:
         if st.button("开始处理", type="primary", use_container_width=True):
-            output_path = f"output_{uploaded_file.name}"
+            output_path = os.path.join("outputs", uploaded_file.name)
 
             # 创建进度条
             progress_bar = st.progress(0, text="初始化...")

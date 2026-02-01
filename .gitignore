@@ -21,11 +21,9 @@ venv/
 # Insightface models
 .insightface/
 
-# Output files
-*.mp4
-*.avi
-*.mov
-*.mkv
+# User uploads and outputs
+uploads/
+outputs/
 temp_video.*
 
 # Logs
