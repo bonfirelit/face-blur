@@ -63,11 +63,21 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("性能优化")
 
+    # 多线程设置
+    num_workers = st.slider(
+        "线程数",
+        min_value=1,
+        max_value=8,
+        value=4,
+        step=1,
+        help="多线程并行处理，更多线程更快但占用更多内存"
+    )
+
     # 优化模式开关
     use_optimization = st.checkbox(
-        "启用优化模式",
+        "启用跟踪优化",
         value=True,
-        help="使用跟踪优化，大幅提升处理速度（推荐）"
+        help="使用跟踪优化，大幅减少检测次数（推荐）"
     )
 
     # 检测间隔
@@ -83,21 +93,38 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 说明")
-    if use_optimization:
-        st.markdown(f"""
-        - **高斯模糊**: 默认方式，平滑模糊效果
-        - **马赛克**: 像素块效果
-        - **优化模式**: 每 {detect_interval} 帧检测一次，中间使用跟踪
-        - 预计提速 5-10 倍
-        - 输出视频将保留原视频的音频、分辨率和帧率
-        """)
+
+    mode_desc = []
+    if num_workers > 1:
+        mode_desc.append(f"**多线程**: {num_workers} 线程并行处理")
     else:
-        st.markdown("""
-        - **高斯模糊**: 默认方式，平滑模糊效果
-        - **马赛克**: 像素块效果
-        - **标准模式**: 每帧都检测，精度最高但速度较慢
-        - 输出视频将保留原视频的音频、分辨率和帧率
-        """)
+        mode_desc.append("**单线程**: 逐帧处理")
+
+    if use_optimization:
+        mode_desc.append(f"**跟踪优化**: 每 {detect_interval} 帧检测一次")
+    else:
+        mode_desc.append("**全检测**: 每帧都检测")
+
+    speed_estimate = []
+    if num_workers > 1:
+        speed_estimate.append(f"多线程 {num_workers}x")
+    if use_optimization:
+        speed_estimate.append(f"跟踪 ~{detect_interval}x")
+
+    st.markdown("""
+    - **高斯模糊**: 默认方式，平滑模糊效果
+    - **马赛克**: 像素块效果
+    """)
+
+    st.markdown("### 当前配置")
+    for desc in mode_desc:
+        st.markdown(f"- {desc}")
+
+    if speed_estimate:
+        st.markdown(f"### 预计提速")
+        st.markdown(f"{' × '.join(speed_estimate)} ≈ **{num_workers * (detect_interval if use_optimization else 1)}x**")
+
+    st.markdown(f"\n输出视频将保留原视频的音频、分辨率和帧率")
 
 # 主界面
 col1, col2 = st.columns(2)
@@ -163,7 +190,8 @@ if uploaded_file is not None:
                 processor = VideoProcessor(
                     detector=detector,
                     use_tracking=use_optimization,
-                    detect_interval=detect_interval
+                    detect_interval=detect_interval,
+                    num_workers=num_workers
                 )
 
                 processor.process(

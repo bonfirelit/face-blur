@@ -3,8 +3,52 @@ import cv2
 import subprocess
 import os
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from detector import FaceDetector
 from blur_effects import create_blur_effect
+
+
+def _apply_blur_to_faces_worker(frame, bboxes, blur_effect):
+    """
+    对帧中的人脸区域应用打码效果（工作线程函数）
+
+    Args:
+        frame: 输入帧
+        bboxes: 人脸边界框列表
+        blur_effect: 打码效果对象
+
+    Returns:
+        处理后的帧
+    """
+    for bbox in bboxes:
+        # 处理不同格式
+        if len(bbox) == 4:
+            if bbox[2] > bbox[0] and bbox[2] - bbox[0] < bbox[2]:  # x1,y1,x2,y2
+                x1, y1, x2, y2 = map(int, bbox)
+            else:  # x,y,w,h
+                x, y, w, h = map(int, bbox)
+                x1, y1, x2, y2 = x, y, x + w, y + h
+
+        # 确保边界框在图像范围内
+        h_img, w_img = frame.shape[:2]
+        x1 = max(0, min(x1, w_img))
+        y1 = max(0, min(y1, h_img))
+        x2 = max(0, min(x2, w_img))
+        y2 = max(0, min(y2, h_img))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        # 提取人脸区域
+        face_region = frame[y1:y2, x1:x2]
+
+        # 应用打码效果
+        blurred = blur_effect.apply(face_region)
+
+        # 写回原帧
+        frame[y1:y2, x1:x2] = blurred
+
+    return frame
 
 
 class FaceTracker:
@@ -51,7 +95,7 @@ class FaceTracker:
 class VideoProcessor:
     """视频处理器"""
 
-    def __init__(self, detector=None, use_tracking=True, detect_interval=5):
+    def __init__(self, detector=None, use_tracking=True, detect_interval=5, num_workers=4):
         """
         初始化视频处理器
 
@@ -59,10 +103,12 @@ class VideoProcessor:
             detector: FaceDetector 实例，如果为 None 则创建默认检测器
             use_tracking: 是否使用跟踪优化
             detect_interval: 检测间隔（每隔多少帧检测一次）
+            num_workers: 线程数，用于并行处理帧
         """
         self.detector = detector or FaceDetector()
         self.use_tracking = use_tracking
         self.detect_interval = detect_interval
+        self.num_workers = num_workers
         self.trackers = []
 
     def _apply_blur_to_faces(self, frame, bboxes, blur_effect):
@@ -220,48 +266,125 @@ class VideoProcessor:
         if progress_callback:
             progress_callback(0, total_frames, "开始处理视频...")
 
-        # 是否启用优化
+        # 构建处理模式信息
+        mode_parts = []
+        if self.num_workers > 1:
+            mode_parts.append(f"{self.num_workers}线程")
         if self.use_tracking:
-            process_mode = f"优化模式 (每{self.detect_interval}帧检测一次)"
+            mode_parts.append(f"每{self.detect_interval}帧检测")
         else:
-            process_mode = "标准模式 (每帧检测)"
+            mode_parts.append("每帧检测")
+        process_mode = " | ".join(mode_parts)
 
-        for frame_idx in tqdm(range(total_frames), desc="Processing video"):
-            ret, frame = cap.read()
-            if not ret:
-                break
+        # 预读取所有帧（对于多线程处理）
+        if self.num_workers > 1:
+            # 多线程处理模式
+            frames_data = []  # [(frame_idx, frame, bboxes), ...]
+            processed_frames = {}  # {frame_idx: processed_frame}
 
-            # 判断是否需要检测（根据配置）
-            need_detect = False
-            if self.use_tracking:
-                # 第一帧必须检测
-                if frame_idx == 0:
+            if progress_callback:
+                progress_callback(0, total_frames, "读取视频帧...")
+
+            # 读取所有帧并获取边界框
+            for frame_idx in tqdm(range(total_frames), desc="Reading frames"):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # 判断是否需要检测
+                need_detect = False
+                if self.use_tracking:
+                    if frame_idx == 0:
+                        need_detect = True
+                    elif frame_idx % self.detect_interval == 0:
+                        need_detect = True
+                    elif len(self.trackers) == 0:
+                        need_detect = True
+                else:
                     need_detect = True
-                # 按间隔检测
-                elif frame_idx % self.detect_interval == 0:
+
+                # 检测或跟踪人脸
+                if need_detect:
+                    bboxes = self.detector.detect(frame, confidence_threshold)
+                    self._initialize_trackers(frame, bboxes)
+                else:
+                    bboxes = self._update_trackers(frame)
+
+                frames_data.append((frame_idx, frame, bboxes))
+
+                if progress_callback and frame_idx % 50 == 0:
+                    progress_callback(frame_idx, total_frames, f"读取帧... {frame_idx}/{total_frames}")
+
+            # 多线程处理
+            if progress_callback:
+                progress_callback(0, total_frames, "多线程处理中...")
+
+            with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                # 提交所有任务
+                future_to_idx = {}
+                for frame_idx, frame, bboxes in frames_data:
+                    future = executor.submit(
+                        _apply_blur_to_faces_worker,
+                        frame.copy(),  # 复制避免竞争
+                        bboxes,
+                        blur_effect
+                    )
+                    future_to_idx[future] = frame_idx
+
+                # 等待任务完成，按顺序写入
+                completed = 0
+                for future in tqdm(as_completed(future_to_idx), total=len(future_to_idx), desc="Processing frames"):
+                    frame_idx = future_to_idx[future]
+                    processed_frame = future.result()
+                    processed_frames[frame_idx] = processed_frame
+                    completed += 1
+
+                    if progress_callback and completed % 10 == 0:
+                        progress_callback(completed, total_frames, f"{process_mode}... {completed}/{total_frames}")
+
+            # 按顺序写入所有帧
+            if progress_callback:
+                progress_callback(total_frames, total_frames, "写入视频...")
+
+            for frame_idx in range(total_frames):
+                if frame_idx in processed_frames:
+                    out.write(processed_frames[frame_idx])
+
+        else:
+            # 单线程处理模式（原有逻辑）
+            for frame_idx in tqdm(range(total_frames), desc="Processing video"):
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # 判断是否需要检测
+                need_detect = False
+                if self.use_tracking:
+                    if frame_idx == 0:
+                        need_detect = True
+                    elif frame_idx % self.detect_interval == 0:
+                        need_detect = True
+                    elif len(self.trackers) == 0:
+                        need_detect = True
+                else:
                     need_detect = True
-                # 没有跟踪器时也检测
-                elif len(self.trackers) == 0:
-                    need_detect = True
-            else:
-                need_detect = True
 
-            # 检测或跟踪人脸
-            if need_detect:
-                bboxes = self.detector.detect(frame, confidence_threshold)
-                self._initialize_trackers(frame, bboxes)
-            else:
-                bboxes = self._update_trackers(frame)
+                # 检测或跟踪人脸
+                if need_detect:
+                    bboxes = self.detector.detect(frame, confidence_threshold)
+                    self._initialize_trackers(frame, bboxes)
+                else:
+                    bboxes = self._update_trackers(frame)
 
-            # 应用打码
-            frame = self._apply_blur_to_faces(frame, bboxes, blur_effect)
+                # 应用打码
+                frame = self._apply_blur_to_faces(frame, bboxes, blur_effect)
 
-            # 写入输出
-            out.write(frame)
+                # 写入输出
+                out.write(frame)
 
-            # 进度回调
-            if progress_callback and frame_idx % 10 == 0:
-                progress_callback(frame_idx, total_frames, f"{process_mode}... {frame_idx}/{total_frames}")
+                # 进度回调
+                if progress_callback and frame_idx % 10 == 0:
+                    progress_callback(frame_idx, total_frames, f"{process_mode}... {frame_idx}/{total_frames}")
 
         # 清理
         cap.release()
