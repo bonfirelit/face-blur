@@ -1,0 +1,76 @@
+name: Build Windows Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v3
+
+    - name: 设置 Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: 安装 PyInstaller
+      run: |
+        pip install pyinstaller -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+    - name: 安装依赖
+      run: |
+        pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+    - name: 构建 Windows 包
+      run: |
+        cd build
+        pyinstaller build.spec
+
+    - name: 准备发布文件
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        $date = Get-Date -Format "yyyyMMdd"
+        $releaseName = "FaceBlur-Pro-v$version-$date"
+
+        New-Item -ItemType Directory -Force -Path "$releaseName"
+
+        Copy-Item "dist\FaceBlur-Pro.exe" -Destination "$releaseName\"
+        Copy-Item "build\release_template\README_用户使用说明.md" -Destination "$releaseName\使用说明.md"
+
+        # 版本信息
+        "FaceBlur Pro v$version" | Out-File -Encoding UTF8 "$releaseName\版本信息.txt"
+        "构建日期: $date" | Out-File -Encoding UTF8 -Append "$releaseName\版本信息.txt"
+        "构建环境: GitHub Actions (Windows)" | Out-File -Encoding UTF8 -Append "$releaseName\版本信息.txt"
+
+        # 启动脚本
+        @"
+@echo off
+title FaceBlur Pro
+echo 启动 FaceBlur Pro...
+echo.
+start "" "FaceBlur-Pro.exe"
+"@ | Out-File -Encoding ASCII "$releaseName\启动程序.bat"
+
+    - name: 压缩发布包
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        $date = Get-Date -Format "yyyyMMdd"
+        $releaseName = "FaceBlur-Pro-v$version-$date"
+        Compress-Archive -Path "$releaseName" -DestinationPath "$releaseName.zip"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v3
+      with:
+        name: windows-package
+        path: '*.zip'
+        retention-days: 30

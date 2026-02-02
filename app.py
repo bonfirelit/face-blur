@@ -202,11 +202,11 @@ with st.sidebar:
     detect_interval = st.slider(
         "检测间隔（帧）",
         min_value=1,
-        max_value=10,
+        max_value=30,
         value=5,
         step=1,
         disabled=not use_optimization,
-        help="每隔多少帧重新检测，间隔越大越快"
+        help="每隔多少帧重新检测。5-10帧推荐，15-30帧有漏检风险"
     )
 
     st.markdown("---")

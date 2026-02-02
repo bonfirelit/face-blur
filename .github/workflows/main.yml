@@ -1,0 +1,79 @@
+name: Build Windows Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip' # 开启缓存，下次构建更快
+
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+    - name: 构建 Windows 包
+      run: |
+        # 注意：建议在根目录运行，spec文件内部处理路径
+        pyinstaller build/build.spec
+
+    - name: 准备发布文件
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        $date = Get-Date -Format "yyyyMMdd"
+        $releaseName = "FaceBlur-Pro-v$version-$date"
+
+        New-Item -ItemType Directory -Force -Path "$releaseName"
+
+        # 这里的路径必须和你的 build.spec 输出位置一致
+        # 通常 PyInstaller 会输出到执行命令目录下的 dist/
+        Copy-Item "dist\FaceBlur-Pro.exe" -Destination "$releaseName\"
+        
+        # 检查文件是否存在再拷贝，避免报错
+        if (Test-Path "build\release_template\README_用户使用说明.md") {
+            Copy-Item "build\release_template\README_用户使用说明.md" -Destination "$releaseName\使用说明.md"
+        }
+
+        "FaceBlur Pro v$version" | Out-File -Encoding UTF8 "$releaseName\版本信息.txt"
+        "构建日期: $date" | Out-File -Encoding UTF8 -Append "$releaseName\版本信息.txt"
+        "构建环境: GitHub Actions (Windows)" | Out-File -Encoding UTF8 -Append "$releaseName\版本信息.txt"
+
+        @"
+        @echo off
+        title FaceBlur Pro
+        echo 启动 FaceBlur Pro...
+        echo.
+        start "" "FaceBlur-Pro.exe"
+        "@ | Out-File -Encoding ASCII "$releaseName\启动程序.bat"
+
+    - name: 压缩发布包
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.inputs.version }}"
+        $date = Get-Date -Format "yyyyMMdd"
+        $releaseName = "FaceBlur-Pro-v$version-$date"
+        Compress-Archive -Path "$releaseName" -DestinationPath "$releaseName.zip"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: FaceBlur-Windows-Package
+        path: "*.zip"
+        retention-days: 30
