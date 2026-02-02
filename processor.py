@@ -2,9 +2,156 @@
 import cv2
 import subprocess
 import os
+import numpy as np
 from tqdm import tqdm
 from detector import FaceDetector
 from blur_effects import create_blur_effect
+
+
+class KalmanFaceTracker:
+    """带卡尔曼滤波预测的人脸跟踪器"""
+
+    def __init__(self, tracker_type='KCF'):
+        """
+        初始化跟踪器
+
+        Args:
+            tracker_type: 跟踪器类型 ('KCF', 'CSRT', 'MOSSE')
+        """
+        self.tracker_type = tracker_type
+        self.tracker = None
+        self.bbox = None
+        self.is_initialized = False
+
+        # 初始化卡尔曼滤波器
+        # 状态向量: [x, y, vx, vy, w, h]
+        # x, y: 人脸框中心坐标
+        # vx, vy: 速度
+        # w, h: 人脸框宽高
+        self.kalman = cv2.KalmanFilter(6, 4)
+
+        # 状态转移矩阵 (匀速运动模型)
+        self.kalman.transitionMatrix = np.array([
+            [1, 0, 1, 0, 0, 0],  # x = x + vx
+            [0, 1, 0, 1, 0, 0],  # y = y + vy
+            [0, 0, 1, 0, 0, 0],  # vx = vx
+            [0, 0, 0, 1, 0, 0],  # vy = vy
+            [0, 0, 0, 0, 1, 0],  # w = w
+            [0, 0, 0, 0, 0, 1],  # h = h
+        ], dtype=np.float32)
+
+        # 测量矩阵 (测量 x, y, w, h)
+        self.kalman.measurementMatrix = np.array([
+            [1, 0, 0, 0, 0, 0],  # 测量 x
+            [0, 1, 0, 0, 0, 0],  # 测量 y
+            [0, 0, 0, 0, 1, 0],  # 测量 w
+            [0, 0, 0, 0, 0, 1],  # 测量 h
+        ], dtype=np.float32)
+
+        # 过程噪声协方差
+        self.kalman.processNoiseCov = np.eye(6, dtype=np.float32) * 0.03
+
+        # 测量噪声协方差
+        self.kalman.measurementNoiseCov = np.eye(4, dtype=np.float32) * 0.1
+
+        # 初始误差协方差
+        self.kalman.errorCovPost = np.eye(6, dtype=np.float32) * 1
+
+    def init(self, frame, bbox):
+        """
+        初始化跟踪器
+
+        Args:
+            frame: 当前帧
+            bbox: 边界框 (x, y, w, h)
+        """
+        self.bbox = bbox
+
+        # 初始化 KCF 跟踪器
+        if self.tracker_type == 'KCF':
+            self.tracker = cv2.TrackerKCF.create()
+        elif self.tracker_type == 'CSRT':
+            self.tracker = cv2.TrackerCSRT.create()
+        elif self.tracker_type == 'MOSSE':
+            self.tracker = cv2.TrackerMOSSE.create()
+        else:
+            self.tracker = cv2.TrackerKCF.create()
+
+        self.tracker.init(frame, bbox)
+
+        # 初始化卡尔曼滤波器状态
+        x, y, w, h = bbox
+        center_x = x + w / 2
+        center_y = y + h / 2
+
+        # 初始状态: [x, y, vx, vy, w, h]
+        self.kalman.statePost = np.array([
+            [center_x],
+            [center_y],
+            [0],  # 初始速度为0
+            [0],
+            [w],
+            [h]
+        ], dtype=np.float32)
+
+        self.is_initialized = True
+
+    def update(self, frame):
+        """
+        更新跟踪
+
+        Returns:
+            (success, bbox): 是否成功，边界框 (x, y, w, h)
+        """
+        if not self.is_initialized or self.tracker is None:
+            return False, None
+
+        # 预测阶段
+        predicted = self.kalman.predict()
+
+        # 尝试跟踪
+        success, bbox = self.tracker.update(frame)
+
+        if success:
+            # 跟踪成功，用跟踪结果校正卡尔曼滤波器
+            x, y, w, h = bbox
+            center_x = x + w / 2
+            center_y = y + h / 2
+
+            # 测量向量: [x, y, w, h]
+            measurement = np.array([
+                [center_x],
+                [center_y],
+                [w],
+                [h]
+            ], dtype=np.float32)
+
+            # 校正
+            self.kalman.correct(measurement)
+            self.bbox = bbox
+            return True, bbox
+        else:
+            # 跟踪失败，使用卡尔曼滤波器预测
+            pred_x = predicted[0, 0]
+            pred_y = predicted[1, 0]
+            pred_w = predicted[4, 0]
+            pred_h = predicted[5, 0]
+
+            # 转换为 x, y, w, h 格式
+            pred_bbox = (
+                pred_x - pred_w / 2,
+                pred_y - pred_h / 2,
+                pred_w,
+                pred_h
+            )
+
+            self.bbox = tuple(map(float, pred_bbox))
+
+            # 只有当预测结果合理时才返回成功
+            if pred_w > 10 and pred_h > 10:
+                return True, pred_bbox
+            else:
+                return False, None
 
 
 class FaceTracker:
@@ -133,8 +280,14 @@ class VideoProcessor:
     def _initialize_trackers(self, frame, bboxes):
         """用新检测到的人脸初始化跟踪器"""
         self.trackers = []
+        use_kalman = self.detect_interval >= 5  # 检测间隔>=5时启用卡尔曼滤波
+
         for bbox in bboxes:
-            tracker = FaceTracker(tracker_type='KCF')
+            if use_kalman:
+                tracker = KalmanFaceTracker(tracker_type='KCF')
+            else:
+                tracker = FaceTracker(tracker_type='KCF')
+
             # 转换为 x,y,w,h 格式
             x1, y1, x2, y2 = bbox
             tracker.init(frame, (x1, y1, x2 - x1, y2 - y1))
@@ -226,7 +379,10 @@ class VideoProcessor:
 
         # 构建处理模式信息
         if self.use_tracking:
-            process_mode = f"智能跟踪 (每{self.detect_interval}帧检测)"
+            if self.detect_interval >= 5:
+                process_mode = f"智能跟踪+轨迹预测 (每{self.detect_interval}帧检测)"
+            else:
+                process_mode = f"智能跟踪 (每{self.detect_interval}帧检测)"
         else:
             process_mode = "标准模式 (每帧检测)"
 
