@@ -65,7 +65,7 @@ class VideoProcessor:
         self.detect_interval = detect_interval
         self.trackers = []
 
-    def _apply_blur_to_faces(self, frame, bboxes, blur_effect):
+    def _apply_blur_to_faces(self, frame, bboxes, blur_effect, mask_scale=1.0):
         """
         对帧中的人脸区域应用打码效果
 
@@ -73,6 +73,7 @@ class VideoProcessor:
             frame: 输入帧
             bboxes: 人脸边界框列表 [[x1, y1, x2, y2], ...] 或 (x, y, w, h) 格式
             blur_effect: 打码效果对象
+            mask_scale: 遮罩缩放比例
 
         Returns:
             处理后的帧
@@ -86,12 +87,13 @@ class VideoProcessor:
                     x, y, w, h = map(int, bbox)
                     x1, y1, x2, y2 = x, y, x + w, y + h
 
-            # 确保边界框在图像范围内
-            h_img, w_img = frame.shape[:2]
-            x1 = max(0, min(x1, w_img))
-            y1 = max(0, min(y1, h_img))
-            x2 = max(0, min(x2, w_img))
-            y2 = max(0, min(y2, h_img))
+            # 根据 mask_scale 扩大人脸框
+            w_box = x2 - x1
+            h_box = y2 - y1
+            x1 = max(0, int(x1 - (w_box * (mask_scale - 1) / 2)))
+            y1 = max(0, int(y1 - (h_box * (mask_scale - 1) / 2)))
+            x2 = min(frame.shape[1], int(x2 + (w_box * (mask_scale - 1) / 2)))
+            y2 = min(frame.shape[0], int(y2 + (h_box * (mask_scale - 1) / 2)))
 
             if x2 <= x1 or y2 <= y1:
                 continue
@@ -178,6 +180,7 @@ class VideoProcessor:
         output_path,
         blur_type='gaussian',
         blur_size=31,
+        mask_scale=1.0,
         confidence_threshold=0.5,
         progress_callback=None
     ):
@@ -189,6 +192,7 @@ class VideoProcessor:
             output_path: 输出视频路径
             blur_type: 打码类型 ('gaussian', 'mosaic')
             blur_size: 打码大小（高斯模糊核大小或马赛克块大小）
+            mask_scale: 遮罩形状调整，1.0为标准椭圆
             confidence_threshold: 人脸检测置信度阈值
             progress_callback: 进度回调函数 callback(current, total, message)
         """
@@ -209,7 +213,7 @@ class VideoProcessor:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         # 创建打码效果
-        blur_effect = create_blur_effect(blur_type, blur_size)
+        blur_effect = create_blur_effect(blur_type, blur_size, mask_scale)
 
         # 创建临时视频文件（无音频）
         temp_video_path = "temp_video.mp4"
@@ -252,7 +256,7 @@ class VideoProcessor:
                 bboxes = self._update_trackers(frame)
 
             # 应用打码
-            frame = self._apply_blur_to_faces(frame, bboxes, blur_effect)
+            frame = self._apply_blur_to_faces(frame, bboxes, blur_effect, mask_scale)
 
             # 写入输出
             out.write(frame)

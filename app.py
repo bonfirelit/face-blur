@@ -178,6 +178,19 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # 遮罩设置
+    st.markdown("### 🎯 遮罩形状")
+    mask_scale = st.slider(
+        "椭圆大小调整",
+        min_value=1.0,
+        max_value=1.5,
+        value=1.0,
+        step=0.1,
+        help="调整椭圆遮罩大小，1.0为标准椭圆"
+    )
+
+    st.markdown("---")
+
     # 性能设置
     st.markdown("### ⚡ 性能优化")
     use_optimization = st.checkbox(
@@ -304,6 +317,7 @@ if uploaded_file is not None:
                     output_path=output_path,
                     blur_type=blur_type_value,
                     blur_size=blur_size,
+                    mask_scale=mask_scale,
                     confidence_threshold=confidence,
                     progress_callback=progress_callback
                 )
